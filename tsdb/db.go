@@ -593,7 +593,7 @@ func (db *DBReadOnly) FlushWAL(dir string) (returnErr error) {
 	return nil
 }
 
-func (db *DBReadOnly) loadDataAsQueryable(maxt int64) (storage.SampleAndChunkQueryable, error) {
+func (db *DBReadOnly) loadDataAsQueryable(maxt int64, enableSTStorage bool) (storage.SampleAndChunkQueryable, error) {
 	select {
 	case <-db.closed:
 		return nil, ErrClosed
@@ -665,9 +665,12 @@ func (db *DBReadOnly) loadDataAsQueryable(maxt int64) (storage.SampleAndChunkQue
 	}
 
 	db.closers = append(db.closers, head)
+	dbOpts := DefaultOptions()
+	dbOpts.EnableSTStorage = enableSTStorage
 	return &DB{
 		dir:                   db.dir,
 		logger:                db.logger,
+		opts:                  dbOpts,
 		blocks:                blocks,
 		head:                  head,
 		blockQuerierFunc:      NewBlockQuerier,
@@ -678,7 +681,7 @@ func (db *DBReadOnly) loadDataAsQueryable(maxt int64) (storage.SampleAndChunkQue
 // Querier loads the blocks and wal and returns a new querier over the data partition for the given time range.
 // Current implementation doesn't support multiple Queriers.
 func (db *DBReadOnly) Querier(mint, maxt int64) (storage.Querier, error) {
-	q, err := db.loadDataAsQueryable(maxt)
+	q, err := db.loadDataAsQueryable(maxt, db.stStorageEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -688,7 +691,7 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (storage.Querier, error) {
 // ChunkQuerier loads blocks and the wal and returns a new chunk querier over the data partition for the given time range.
 // Current implementation doesn't support multiple ChunkQueriers.
 func (db *DBReadOnly) ChunkQuerier(mint, maxt int64) (storage.ChunkQuerier, error) {
-	q, err := db.loadDataAsQueryable(maxt)
+	q, err := db.loadDataAsQueryable(maxt, db.stStorageEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -987,6 +990,7 @@ func open(dir string, l *slog.Logger, r prometheus.Registerer, opts *Options, rn
 			PD:                          opts.PostingsDecoderFactory,
 			UseUncachedIO:               opts.UseUncachedIO,
 			BlockExcludeFilter:          opts.BlockCompactionExcludeFunc,
+			EnableSTStorage:             opts.EnableSTStorage,
 		})
 	}
 	if err != nil {
@@ -2439,7 +2443,7 @@ func (db *DB) ChunkQuerier(mint, maxt int64) (storage.ChunkQuerier, error) {
 	if err != nil {
 		return nil, err
 	}
-	return storage.NewMergeChunkQuerier(blockQueriers, nil, storage.NewCompactingChunkSeriesMerger(storage.ChainedSeriesMerge)), nil
+	return storage.NewMergeChunkQuerier(blockQueriers, nil, storage.NewCompactingChunkSeriesMergerWithStoreST(storage.ChainedSeriesMerge, db.opts.EnableSTStorage)), nil
 }
 
 func (db *DB) ExemplarQuerier(ctx context.Context) (storage.ExemplarQuerier, error) {
