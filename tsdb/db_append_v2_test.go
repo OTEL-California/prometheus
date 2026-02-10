@@ -7533,9 +7533,11 @@ func TestCompactHeadWithSTStorage_AppendV2(t *testing.T) {
 	// Open chunk reader and index reader.
 	chunkr, err := b.Chunks()
 	require.NoError(t, err)
+	defer chunkr.Close()
 
 	indexr, err := b.Index()
 	require.NoError(t, err)
+	defer indexr.Close()
 
 	// Get postings for the series.
 	p, err := indexr.Postings(ctx, "a", "b")
@@ -7557,10 +7559,6 @@ func TestCompactHeadWithSTStorage_AppendV2(t *testing.T) {
 	}
 	require.NoError(t, p.Err())
 	require.Positive(t, chunkCount, "expected at least one chunk")
-
-	// Close the readers before db.Close() to avoid hang - db.Close() waits for block references to be released.
-	require.NoError(t, chunkr.Close())
-	require.NoError(t, indexr.Close())
 }
 
 func TestNewCompactorFunc_AppendV2(t *testing.T) {
