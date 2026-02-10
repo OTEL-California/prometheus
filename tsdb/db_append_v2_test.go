@@ -7497,6 +7497,72 @@ func TestAbortBlockCompactions_AppendV2(t *testing.T) {
 	require.Equal(t, 4, compactions, "expected 4 compactions to be completed")
 }
 
+// TestCompactHeadWithSTStorage_AppendV2 ensures that when EnableSTStorage is true,
+// compacted blocks contain chunks with EncXOROptST encoding for float samples.
+func TestCompactHeadWithSTStorage_AppendV2(t *testing.T) {
+	t.Parallel()
+
+	opts := &Options{
+		RetentionDuration: int64(time.Hour * 24 * 15 / time.Millisecond),
+		NoLockfile:        true,
+		MinBlockDuration:  int64(time.Hour * 2 / time.Millisecond),
+		MaxBlockDuration:  int64(time.Hour * 2 / time.Millisecond),
+		WALCompression:    compression.Snappy,
+		EnableSTStorage:   true,
+	}
+	db := newTestDB(t, withOpts(opts))
+	ctx := context.Background()
+	app := db.AppenderV2(ctx)
+
+	maxt := 100
+	for i := range maxt {
+		// AppendV2 signature: (ref, labels, st, t, v, h, fh, opts)
+		// st=0 (start timestamp), t=i (sample timestamp)
+		// TODO(krajorama): verify with non zero st once the API supports it.
+		_, err := app.Append(0, labels.FromStrings("a", "b"), 0, int64(i), float64(i), nil, nil, storage.AOptions{})
+		require.NoError(t, err)
+	}
+	require.NoError(t, app.Commit())
+
+	// Compact the Head to create a new block.
+	require.NoError(t, db.CompactHead(NewRangeHead(db.Head(), 0, int64(maxt)-1)))
+	// Check that we have exactly one block.
+	require.Len(t, db.Blocks(), 1)
+	b := db.Blocks()[0]
+
+	// Open chunk reader and index reader.
+	chunkr, err := b.Chunks()
+	require.NoError(t, err)
+
+	indexr, err := b.Index()
+	require.NoError(t, err)
+
+	// Get postings for the series.
+	p, err := indexr.Postings(ctx, "a", "b")
+	require.NoError(t, err)
+
+	chunkCount := 0
+	for p.Next() {
+		var builder labels.ScratchBuilder
+		var chks []chunks.Meta
+		require.NoError(t, indexr.Series(p.At(), &builder, &chks))
+
+		for _, chk := range chks {
+			c, _, err := chunkr.ChunkOrIterable(chk)
+			require.NoError(t, err)
+			require.Equal(t, chunkenc.EncXOROptST, c.Encoding(),
+				"expected EncXOROptST encoding when EnableSTStorage=true, got %s", c.Encoding())
+			chunkCount++
+		}
+	}
+	require.NoError(t, p.Err())
+	require.Positive(t, chunkCount, "expected at least one chunk")
+
+	// Close the readers before db.Close() to avoid hang - db.Close() waits for block references to be released.
+	require.NoError(t, chunkr.Close())
+	require.NoError(t, indexr.Close())
+}
+
 func TestNewCompactorFunc_AppendV2(t *testing.T) {
 	opts := DefaultOptions()
 	block1 := ulid.MustNew(1, nil)
