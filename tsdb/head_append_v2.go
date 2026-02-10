@@ -95,6 +95,7 @@ func (h *Head) appenderV2() *headAppenderV2 {
 			typesInBatch:          h.getTypeMap(),
 			appendID:              appendID,
 			cleanupAppendIDsBelow: cleanupAppendIDsBelow,
+			storeST:               h.opts.EnableSTStorage.Load(),
 		},
 	}
 }
