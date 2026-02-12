@@ -2174,6 +2174,9 @@ func (h *Head) deleteSeriesByID(refs []chunks.HeadSeriesRef) {
 
 		hash := series.lset.Hash()
 		hashShard := int(hash) & (h.series.size - 1)
+		if hashShard != refShard {
+			h.series.locks[hashShard].Lock()
+		}
 
 		chunksRemoved += len(series.mmappedChunks)
 		if series.headChunks != nil {
@@ -2185,6 +2188,9 @@ func (h *Head) deleteSeriesByID(refs []chunks.HeadSeriesRef) {
 		h.series.hashes[hashShard].del(hash, series.ref)
 		delete(h.series.series[refShard], series.ref)
 
+		if hashShard != refShard {
+			h.series.locks[hashShard].Unlock()
+		}
 		h.series.locks[refShard].Unlock()
 	}
 
